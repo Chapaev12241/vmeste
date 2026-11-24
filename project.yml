@@ -5,8 +5,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: '5.0'
-    MARKETING_VERSION: '0.2'
-    CURRENT_PROJECT_VERSION: '2'
+    MARKETING_VERSION: '0.3'
+    CURRENT_PROJECT_VERSION: '3'
 packages:
   MapLibre:
     url: https://github.com/maplibre/maplibre-gl-native-distribution.git
@@ -19,6 +19,8 @@ targets:
       - RyadomApp.swift
       - API.swift
       - CityMap.swift
+      - CarMarker.swift
+      - AppSettingsView.swift
       - Shared
       - path: Resources
         buildPhase: resources

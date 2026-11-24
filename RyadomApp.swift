@@ -20,40 +20,128 @@ struct RyadomApp: App {
     static let shared = Position()
     private let manager = CLLocationManager()
     @Published var location: CLLocation?
-    @Published var status = "Обмен выключен"
+    @Published var status = "Геопозиция выключена"
     @Published var enabled = false
-    override init() { super.init(); manager.delegate = self; manager.desiredAccuracy = kCLLocationAccuracyHundredMeters; enabled = UserDefaults.standard.bool(forKey: "sharingEnabled"); start() }
+    @Published var locating = false
+    @Published var authorization = CLAuthorizationStatus.notDetermined
+    private var foreground = true
+    private var monitoring = false
+    private var standaloneRequest = false
+    private var lastAttempt = Date.distantPast
+    private var uploadTask: Task<Void, Never>?
+    private var retryTask: Task<Void, Never>?
+    override init() {
+        super.init()
+        foreground = UIApplication.shared.applicationState != .background
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        manager.distanceFilter = 25
+        manager.pausesLocationUpdatesAutomatically = true
+        authorization = manager.authorizationStatus
+        enabled = UserDefaults.standard.bool(forKey: "sharingEnabled")
+        if enabled { start() }
+    }
+    var permissionBlocked: Bool { authorization == .denied || authorization == .restricted }
     func toggle() {
-        enabled.toggle(); UserDefaults.standard.set(enabled, forKey: "sharingEnabled")
-        if enabled { manager.requestWhenInUseAuthorization(); start() }
-        else { manager.stopMonitoringSignificantLocationChanges(); manager.stopUpdatingLocation(); status = "Обмен выключен"; Task { await API.shared.action("pause") } }
+        enabled.toggle()
+        UserDefaults.standard.set(enabled, forKey: "sharingEnabled")
+        if enabled { refreshNow() }
+        else {
+            stopLocally()
+            Task { await API.shared.action("pause") }
+        }
     }
     func stopLocally() {
-        enabled = false; UserDefaults.standard.set(false, forKey: "sharingEnabled")
-        manager.stopMonitoringSignificantLocationChanges(); manager.stopUpdatingLocation(); status = "Обмен выключен"
+        enabled = false; locating = false
+        UserDefaults.standard.set(false, forKey: "sharingEnabled")
+        retryTask?.cancel(); retryTask = nil
+        manager.stopUpdatingLocation(); manager.stopMonitoringSignificantLocationChanges()
+        monitoring = false; status = "Геопозиция выключена"
+    }
+    func setForeground(_ value: Bool) {
+        foreground = value
+        if value { if enabled { start(); publishIfNeeded(force: true) } }
+        else { manager.stopUpdatingLocation(); retryTask?.cancel(); retryTask = nil; if enabled { start() } }
+    }
+    func refreshNow() {
+        if !enabled { enabled = true; UserDefaults.standard.set(true, forKey: "sharingEnabled") }
+        lastAttempt = .distantPast
+        if permissionBlocked { openSettings(); return }
+        manager.stopUpdatingLocation()
+        start()
+        if let location, abs(location.timestamp.timeIntervalSinceNow) < 30 { publishIfNeeded(force: true) }
+    }
+    func locateOnly() {
+        if enabled { refreshNow(); return }
+        authorization = manager.authorizationStatus
+        if permissionBlocked { openSettings(); return }
+        standaloneRequest = true; locating = true
+        if authorization == .notDetermined { manager.requestWhenInUseAuthorization() }
+        else { manager.requestLocation() }
     }
     func start() {
         guard enabled else { return }
-        switch manager.authorizationStatus {
+        authorization = manager.authorizationStatus
+        switch authorization {
         case .authorizedAlways, .authorizedWhenInUse:
-            manager.requestLocation()
-            if CLLocationManager.significantLocationChangeMonitoringAvailable() { manager.startMonitoringSignificantLocationChanges() }
-            status = "Экономный режим"
-        case .denied, .restricted: status = "Разрешите геопозицию в настройках"; enabled = false
-        default: status = "Ожидание разрешения"
+            if !monitoring, CLLocationManager.significantLocationChangeMonitoringAvailable() {
+                manager.startMonitoringSignificantLocationChanges(); monitoring = true
+            }
+            if foreground { locating = location == nil; manager.startUpdatingLocation(); status = location == nil ? "Ищем геопозицию…" : "Геопозиция включена"; scheduleRetry() }
+            else { status = authorization == .authorizedAlways ? "Экономный режим в фоне" : "Для работы в фоне разрешите «Всегда»" }
+        case .denied, .restricted:
+            locating = false; manager.stopUpdatingLocation(); status = "Разрешите геопозицию в настройках iPhone"
+        case .notDetermined:
+            locating = true; status = "Ожидаем разрешения"; manager.requestWhenInUseAuthorization()
+        @unknown default: status = "Проверьте разрешение геопозиции"
         }
     }
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) { start() }
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) { location = locations.last
-        if enabled, let location, location.horizontalAccuracy >= 0, abs(location.timestamp.timeIntervalSinceNow) < 120 {
-            let taskID = UIApplication.shared.beginBackgroundTask(withName: "Publish position", expirationHandler: nil)
-            Task {
-                await API.shared.publish(Coordinates(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude, accuracy: location.horizontalAccuracy))
-                if taskID != .invalid { UIApplication.shared.endBackgroundTask(taskID) }
+    private func scheduleRetry() {
+        guard retryTask == nil else { return }
+        retryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(15)) } catch { break }
+                guard let self, self.enabled, self.foreground else { break }
+                if self.location == nil || Date().timeIntervalSince(self.location!.timestamp) > 30 {
+                    self.manager.stopUpdatingLocation()
+                    self.manager.startUpdatingLocation()
+                }
+                self.publishIfNeeded(force: false)
             }
-        } }
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) { status = "Не удалось обновить геопозицию" }
-    func enableBackground() { manager.requestAlwaysAuthorization() }
+        }
+    }
+    private func publishIfNeeded(force: Bool) {
+        guard enabled, let location, location.horizontalAccuracy >= 0, abs(location.timestamp.timeIntervalSinceNow) < 180,
+              uploadTask == nil, force || Date().timeIntervalSince(lastAttempt) >= 15 else { return }
+        lastAttempt = Date()
+        let taskID = UIApplication.shared.beginBackgroundTask(withName: "Send position", expirationHandler: nil)
+        uploadTask = Task { [weak self] in
+            await API.shared.publish(Coordinates(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude, accuracy: location.horizontalAccuracy))
+            if taskID != .invalid { UIApplication.shared.endBackgroundTask(taskID) }
+            self?.uploadTask = nil
+        }
+    }
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        authorization = manager.authorizationStatus
+        if enabled { start() }
+        else if standaloneRequest && (authorization == .authorizedAlways || authorization == .authorizedWhenInUse) { manager.requestLocation() }
+    }
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let latest = locations.last(where: { $0.horizontalAccuracy >= 0 }), abs(latest.timestamp.timeIntervalSinceNow) < 180 else { return }
+        location = latest; locating = false; standaloneRequest = false
+        status = enabled ? "Геопозиция включена" : "Геопозиция выключена"
+        publishIfNeeded(force: !foreground)
+    }
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        if (error as? CLError)?.code == .denied { authorization = manager.authorizationStatus; locating = false; status = "Разрешите геопозицию в настройках iPhone" }
+        else { locating = enabled; status = "GPS пока недоступен — повторяем запрос"; if enabled && foreground { scheduleRetry() } }
+    }
+    func enableBackground() {
+        if authorization == .notDetermined { refreshNow() }
+        else if permissionBlocked { openSettings() }
+        else { manager.requestAlwaysAuthorization() }
+    }
+    func openSettings() { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } }
 }
 
 enum MapLook: String, CaseIterable { case city = "Город", satellite = "Спутник" }
@@ -77,14 +165,21 @@ struct Home: View {
     @State private var revision = 0
     @State private var fitPair = false
     @State private var mapFailed = false
+    @State private var focusedOwn = false
+    @AppStorage("passoMode") private var passoMode = "auto"
+    @AppStorage("passoOwnerIsMe") private var passoOwnerIsMe = false
+    @State private var previousPartnerSample: (CLLocationCoordinate2D, TimeInterval)?
+    @State private var partnerDrivingUntil = Date.distantPast
+    @State private var ownDrivingUntil = Date.distantPast
+    @State private var partnerHeading: Double = 0
     @State private var satelliteCamera: MapCameraPosition = .camera(MapCamera(centerCoordinate: Home.yuzhny, distance: 1800, heading: -18, pitch: 58))
     private let accent = Color(red: 0.40, green: 0.34, blue: 0.90)
     private let coral = Color(red: 1, green: 0.49, blue: 0.40)
     private var people: [MapPerson] {
         var result: [MapPerson] = []
-        if let own = position.location { result.append(MapPerson(id: "me", name: name, coordinate: own.coordinate, avatar: avatar, isMe: true)) }
+        if let own = position.location { result.append(MapPerson(id: "me", name: name, coordinate: own.coordinate, avatar: avatar, isMe: true, isDriving: ownerIsDriving && passoOwnerIsMe, heading: max(0, own.course))) }
         if let partner = api.state?.partner, !partner.paused, let point = partner.location {
-            result.append(MapPerson(id: "partner", name: partner.name, coordinate: CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude), avatar: partner.avatar.flatMap { Data(base64Encoded: $0) }, isMe: false))
+            result.append(MapPerson(id: "partner", name: partner.name, coordinate: CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude), avatar: partner.avatar.flatMap { Data(base64Encoded: $0) }, isMe: false, isDriving: ownerIsDriving && !passoOwnerIsMe, heading: partnerHeading))
         }
         return result
     }
@@ -105,10 +200,18 @@ struct Home: View {
         .task {
             while !Task.isCancelled {
                 if phase == .active { do { try await api.refresh() } catch { api.error = error.localizedDescription } }
-                try? await Task.sleep(for: .seconds(30))
+                try? await Task.sleep(for: .seconds(15))
             }
         }
-        .onChange(of: name) { _, value in Task { await api.action("profile", ["name": value, "avatar": avatar?.base64EncodedString() as Any? ?? NSNull()]) } }
+        .onChange(of: phase) { _, phase in position.setForeground(phase == .active); if phase == .active { Task { do { try await api.connect() } catch { api.error = error.localizedDescription } } } }
+        .onChange(of: position.location?.timestamp) { _, _ in
+            if let location = position.location {
+                if location.speed >= 4.5 { ownDrivingUntil = Date().addingTimeInterval(120) }
+                if !focusedOwn { focusedOwn = true; focus(location.coordinate) }
+            }
+        }
+        .onChange(of: api.state?.partner?.updated) { _, _ in updatePartnerMotion() }
+        .onAppear { position.setForeground(phase == .active) }
         .onChange(of: photo) { _, item in Task { await savePhoto(item) } }
         .tint(accent)
     }
@@ -119,8 +222,12 @@ struct Home: View {
             Map(position: $satelliteCamera) {
                 ForEach(people) { person in
                     Annotation(person.name, coordinate: person.coordinate) {
-                        ProfileBubble(data: person.avatar, name: person.name, color: person.isMe ? accent : coral, size: 42)
-                            .padding(4).background(.background, in: Circle()).shadow(color: .black.opacity(0.16), radius: 5, y: 3)
+                        if person.isDriving {
+                            Image(uiImage: CarMarker.image(heading: person.heading)).resizable().frame(width: 76, height: 76).accessibilityLabel("Белая Passo — поездка девушки")
+                        } else {
+                            ProfileBubble(data: person.avatar, name: person.name, color: person.isMe ? accent : coral, size: 42)
+                                .padding(4).background(.background, in: Circle()).shadow(color: .black.opacity(0.16), radius: 5, y: 3)
+                        }
                     }
                 }
             }.mapStyle(.hybrid(elevation: .realistic)).mapControls { MapCompass(); MapScaleView() }
@@ -147,7 +254,7 @@ struct Home: View {
                 Spacer()
                 VStack(spacing: 10) {
                     Button { changeDimension() } label: { Text(is3D ? "3D" : "2D").font(.system(size: 15, weight: .bold, design: .rounded)).frame(width: 46, height: 46).background(.regularMaterial, in: Circle()) }.accessibilityLabel(is3D ? "Переключить в 2D" : "Переключить в 3D")
-                    Button { if let own = position.location { focus(own.coordinate) } else { position.start() } } label: { Image(systemName: "location.fill").font(.system(size: 18, weight: .semibold)).frame(width: 46, height: 46).background(.regularMaterial, in: Circle()) }.accessibilityLabel("Моя геопозиция").disabled(position.location == nil)
+                    Button { if let own = position.location { focus(own.coordinate) }; position.locateOnly() } label: { Image(systemName: "location.fill").font(.system(size: 18, weight: .semibold)).frame(width: 46, height: 46).background(.regularMaterial, in: Circle()) }.accessibilityLabel("Определить мою геопозицию")
                 }
             }
             HStack(spacing: 8) {
@@ -179,15 +286,47 @@ struct Home: View {
                                 Text(partner.paused ? "Геопозиция на паузе" : distanceText).lineLimit(1)
                                 if !partner.paused, let timestamp = partner.updated { Text("·"); Text(Date(timeIntervalSince1970: timestamp), style: .relative).lineLimit(1) }
                             }.font(.system(size: 11)).foregroundStyle(.secondary)
-                        } else { Text("Подключитесь по одному коду").font(.system(size: 12)).foregroundStyle(.secondary) }
+                        } else { Text(position.enabled ? position.status : "Подключитесь по одному коду").font(.system(size: 12)).foregroundStyle(.secondary) }
                     }
                     Spacer(minLength: 0)
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain)
-            Button { position.toggle() } label: {
-                Image(systemName: position.enabled ? "pause.fill" : "location.fill").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white).frame(width: 44, height: 44).background(accent, in: Circle())
+            Button { if position.permissionBlocked { position.openSettings() } else { position.toggle() } } label: {
+                Image(systemName: position.permissionBlocked ? "location.slash.fill" : position.enabled ? "pause.fill" : "location.fill").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white).frame(width: 44, height: 44).background(accent, in: Circle())
             }.accessibilityLabel(position.enabled ? "Приостановить мою геопозицию" : "Включить мою геопозицию")
         }.padding(14).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 26)).overlay(RoundedRectangle(cornerRadius: 26).stroke(.white.opacity(0.4), lineWidth: 0.5)).shadow(color: .black.opacity(0.09), radius: 18, y: 6)
+    }
+    private var ownerIsDriving: Bool {
+        if passoOwnerIsMe { return passoMode != "off" && position.enabled && position.location != nil && (passoMode == "trip" || Date() < ownDrivingUntil || (isTogether && Date() < partnerDrivingUntil)) }
+        guard passoMode != "off", api.state?.partner?.paused == false, api.state?.partner?.location != nil else { return false }
+        if passoMode == "trip" { return true }
+        if Date() < partnerDrivingUntil { return true }
+        if let own = position.location, let point = api.state?.partner?.location,
+           own.distance(from: CLLocation(latitude: point.latitude, longitude: point.longitude)) < 120,
+           Date() < ownDrivingUntil { return true }
+        return false
+    }
+    private var isTogether: Bool {
+        guard let own = position.location, let point = api.state?.partner?.location else { return false }
+        return own.distance(from: CLLocation(latitude: point.latitude, longitude: point.longitude)) < 120
+    }
+    private func updatePartnerMotion() {
+        guard let partner = api.state?.partner, !partner.paused, let point = partner.location, let timestamp = partner.updated else {
+            previousPartnerSample = nil; partnerDrivingUntil = .distantPast; return
+        }
+        let coordinate = CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
+        defer { previousPartnerSample = (coordinate, timestamp) }
+        guard let previous = previousPartnerSample else { return }
+        let elapsed = timestamp - previous.1
+        guard elapsed > 1, elapsed < 300 else { return }
+        let distance = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude).distance(from: CLLocation(latitude: previous.0.latitude, longitude: previous.0.longitude))
+        let speed = distance / elapsed
+        if speed >= 4.5 && speed < 70 && distance > max(20, point.accuracy * 0.6) { partnerDrivingUntil = Date().addingTimeInterval(120) }
+        if distance > 10 {
+            let lat1 = previous.0.latitude * .pi / 180, lat2 = coordinate.latitude * .pi / 180
+            let delta = (coordinate.longitude - previous.0.longitude) * .pi / 180
+            partnerHeading = atan2(sin(delta) * cos(lat2), cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(delta)) * 180 / .pi
+        }
     }
     private var distanceText: String {
         guard let own = position.location, let point = api.state?.partner?.location else { return "Ждём геопозицию" }
@@ -231,24 +370,9 @@ struct Home: View {
         if let jpeg = resized.jpegData(compressionQuality: 0.65) { avatar = jpeg; UserDefaults.standard.set(jpeg, forKey: "avatar"); await api.action("profile", ["name": name, "avatar": jpeg.base64EncodedString()]) }
     }
     private var settingsView: some View {
-                NavigationStack { Form {
-                    Section("Твой профиль") { TextField("Имя", text: $name); PhotosPicker(selection: $photo, matching: .images) { Label("Выбрать аватарку", systemImage: "photo") } }
-                    Section("Подключение") {
-                        DisclosureGroup("Адрес сервера") { TextField("HTTPS-адрес", text: $api.endpoint).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL) }
-                        Button("Подключиться") { Task { do { try await api.connect() } catch { api.error = error.localizedDescription } } }
-                        if api.state?.partner == nil {
-                            Button("Создать код на 10 минут") { Task { await api.action("invite") } }
-                            if let invite = api.invite { Text(invite).font(.title.monospaced()).textSelection(.enabled); ShareLink(item: "Подключись ко мне в Рядом. Сервер: \(api.endpoint), код: \(invite) (10 минут)") }
-                            TextField("Код партнёра", text: $code).textInputAutocapitalization(.characters).autocorrectionDisabled()
-                            Button("Присоединиться") { Task { await api.action("join", ["code": code]) } }
-                        } else { Button("Отключить пару", role: .destructive) { confirmUnpair = true } }
-                        if api.busy { ProgressView() }
-                    }
-                    Section("Геопозиция") { Button("Разрешить обновления в фоне") { position.enableBackground() }; Text("Экономный режим обновляет позицию при существенном перемещении. Это не непрерывная трансляция."); Link("Открыть настройки iPhone", destination: URL(string: UIApplication.openSettingsURLString)!) }
-                    Section { Button("Удалить мой аккаунт", role: .destructive) { confirmDelete = true } }
-                    Section("О приложении") { Text("Рядом · 0.2"); Text("Виджет показывает последнюю позицию, полученную приложением. iOS определяет время его обновления.") }
-                }.navigationTitle("Настройки").toolbar { Button("Готово") { settings = false } } }
+        AppSettingsView(position: position, api: api, name: $name, photo: $photo, avatar: avatar, confirmUnpair: $confirmUnpair, confirmDelete: $confirmDelete)
     }
+
 }
 struct ProfileBubble: View {
     let data: Data?
