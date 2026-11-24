@@ -5,6 +5,10 @@ options:
 settings:
   base:
     SWIFT_VERSION: '5.0'
+packages:
+  MapLibre:
+    url: https://github.com/maplibre/maplibre-gl-native-distribution.git
+    exactVersion: 6.31.0
 targets:
   Ryadom:
     type: application
@@ -12,14 +16,17 @@ targets:
     sources:
       - RyadomApp.swift
       - API.swift
+      - CityMap.swift
       - Shared
       - path: Resources
         buildPhase: resources
     dependencies:
+      - package: MapLibre
       - target: RyadomWidget
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.personal.ryadom
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     entitlements:
       path: Ryadom.entitlements
       properties:

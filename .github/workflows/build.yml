@@ -25,3 +25,22 @@ jobs:
         with:
           name: Ryadom-unsigned
           path: Ryadom-unsigned.ipa
+      - name: Capture iPhone preview
+        continue-on-error: true
+        run: |
+          DEVICE=$(xcrun simctl list devices available --json | python3 -c 'import sys,json; d=json.load(sys.stdin); print(next(x["udid"] for a in d["devices"].values() for x in a if "iPhone" in x["name"]))')
+          xcrun simctl boot "$DEVICE" || true
+          xcrun simctl bootstatus "$DEVICE" -b
+          xcodebuild -project Ryadom.xcodeproj -scheme Ryadom -sdk iphonesimulator -configuration Debug -destination "id=$DEVICE" -derivedDataPath simulator-build CODE_SIGNING_ALLOWED=NO build > simulator-build.log 2>&1
+          xcrun simctl install "$DEVICE" simulator-build/Build/Products/Debug-iphonesimulator/Ryadom.app
+          xcrun simctl status_bar "$DEVICE" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState charged --batteryLevel 100
+          xcrun simctl launch "$DEVICE" com.personal.ryadom
+          sleep 20
+          xcrun simctl io "$DEVICE" screenshot Ryadom-iPhone.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Ryadom-preview
+          path: |
+            Ryadom-iPhone.png
+            simulator-build.log
