@@ -1,27 +1,25 @@
-Бесплатный сервер alwaysdata
+Рабочий сервер alwaysdata
 
-Нужен личный аккаунт Free. Сначала проверьте доступ к alwaysdata.net с обоих телефонов без VPN.
+Аккаунт: mikhail000 (создан владельцем вручную).
+Адрес: https://mikhail000.alwaysdata.net
+Проверка: https://mikhail000.alwaysdata.net/health -> {"ok": true}
+Панель: https://admin.alwaysdata.com/site/1109890/
 
-1. Через SSH в своём аккаунте:
-   git clone https://github.com/Chapaev12241/vmeste.git
-   mkdir -p ~/ryadom-data
+Type: User program
+Command: bash -c 'umask 077; exec python3 /home/mikhail000/ryadom/server.py'
+Environment: DATABASE_PATH=/home/mikhail000/ryadom/ryadom.sqlite
+IP и PORT предоставляет платформа; сервер поддерживает IPv6.
+Force HTTPS: включён.
 
-2. В Web > Sites > Add a site:
-   Type: User program
-   Address: <account>.alwaysdata.net
-   Command: python3 /home/<account>/vmeste/server/server.py
-   Working directory: /home/<account>/vmeste/server
+Код уже загружен в /home/mikhail000/ryadom/server.py из коммита
+23293aa2adcd27034111ffd3431e53ca66ea3e29 репозитория Chapaev12241/vmeste.
+При обычном перезапуске сервер не зависит от доступности GitHub.
 
-3. В Environment задать:
-   IP=<адрес из пояснения в панели User program>
-   PORT=<порт из пояснения в панели User program>
-   DATABASE_PATH=/home/<account>/ryadom-data/ryadom.sqlite
+Проверены через публичный HTTPS: регистрация, подключение пары, передача
+синтетической геопозиции, изоляция третьего участника, пауза и разрыв пары.
+Тестовые аккаунты удалены после проверки.
 
-4. Не размещайте файл базы в каталоге статического сайта. Включите HTTPS и перенаправление HTTP на HTTPS в панели. Проверьте https://<account>.alwaysdata.net/health — должен отвечать {"ok": true}.
-
-5. В приложении на обоих iPhone указать https://<account>.alwaysdata.net.
-
-Обновление: cd ~/vmeste && git pull, затем Restart в панели сайта. Данные сохраняются отдельно от репозитория.
-
-Документация: https://help.alwaysdata.com/en/docs/web-hosting/sites/http-servers/user-program/
-Тариф: https://www.alwaysdata.com/en/offers/
+Для обновления нужно заменить только server.py и перезапустить сайт.
+Не удалять файл базы и не раздавать каталог ryadom как статические файлы.
+Пароль существующего аккаунта владельца не считывался и не изменялся.
+Адрес и настройки также записаны в локальные Заметки на Mac.
