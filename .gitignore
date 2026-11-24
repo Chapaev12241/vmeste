@@ -1,0 +1,7 @@
+build/
+Payload/
+*.ipa
+*.sqlite*
+__pycache__/
+*.xcodeproj/
+.DS_Store

@@ -32,6 +32,7 @@ enum APIError: LocalizedError {
     @Published var invite: String?
     @Published var endpoint = UserDefaults.standard.string(forKey:"endpoint") ?? ""
     private var token=Vault.read()
+    private var registration: Task<String, Error>?
     private var boundEndpoint: String? = UserDefaults.standard.string(forKey:"boundEndpoint")
     func request(_ path: String, _ body: [String:Any]? = nil) async throws -> Data {
         guard let base=URL(string:endpoint),base.scheme=="https",base.host != nil,base.user==nil,base.query==nil,base.fragment==nil else { throw APIError.message("Укажите HTTPS-адрес вашего сервера") }
@@ -50,9 +51,17 @@ enum APIError: LocalizedError {
     }
     func connect() async throws {
         if token==nil {
-            let data=try await request("register",[:])
-            let object=try JSONSerialization.jsonObject(with:data) as! [String:String]
-            guard let newToken=object["token"] else { throw APIError.message("Сервер не вернул ключ") }
+            if registration == nil {
+                registration = Task {
+                    let data = try await self.request("register", [:])
+                    let object = try JSONSerialization.jsonObject(with: data) as? [String: String]
+                    guard let value = object?["token"] else { throw APIError.message("Сервер не вернул ключ") }
+                    return value
+                }
+            }
+            let newToken: String
+            do { newToken = try await registration!.value } catch { registration = nil; throw error }
+            registration = nil
             try Vault.save(newToken); token=newToken; boundEndpoint=endpoint
             UserDefaults.standard.set(endpoint,forKey:"boundEndpoint")
         }
@@ -65,7 +74,7 @@ enum APIError: LocalizedError {
         SharedStore.state=state; WidgetCenter.shared.reloadAllTimelines()
     }
     func action(_ path: String, _ body: [String:Any]=[:]) async {
-        guard !busy else { return }; busy=true; defer { busy=false }
+        busy=true; defer { busy=false }
         do {
             try await connect()
             let data=try await request(path,body)
@@ -78,7 +87,9 @@ enum APIError: LocalizedError {
         } catch { self.error=error.localizedDescription }
     }
     func publish(_ location: Coordinates) async {
-        do { try await connect(); _=try await request("location",["latitude":location.latitude,"longitude":location.longitude,"accuracy":location.accuracy]); try await refresh() }
+        do { try await connect(); _=try await request("location",["latitude":location.latitude,"longitude":location.longitude,"accuracy":location.accuracy])
+            if !Position.shared.enabled { _ = try await request("pause", [:]) }
+            try await refresh() }
         catch { self.error=error.localizedDescription }
     }
 }

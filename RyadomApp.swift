@@ -63,7 +63,7 @@ struct Home: View {
     @State private var code = ""
     @State private var confirmUnpair = false
     @State private var confirmDelete = false
-    @AppStorage("name") private var name = "Миша"
+    @AppStorage("name") private var name = "Я"
     @State private var photo: PhotosPickerItem?
     @State private var avatar: Data? = UserDefaults.standard.data(forKey: "avatar")
     @State private var settings = false
@@ -77,14 +77,17 @@ struct Home: View {
                     }
                     if let partner = api.state?.partner, !partner.paused, let point = partner.location {
                         Annotation(partner.name, coordinate: CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)) {
-                            VStack { Image(systemName: "heart.circle.fill").font(.largeTitle).foregroundStyle(.pink); Text(partner.name).font(.caption.bold()).padding(6).background(.regularMaterial).clipShape(Capsule()) }
+                            VStack {
+                                if let encoded = partner.avatar, let data = Data(base64Encoded: encoded), let image = UIImage(data: data) { Image(uiImage: image).resizable().scaledToFill().frame(width: 48, height: 48).clipShape(Circle()).padding(4).background(.white).clipShape(Circle()) }
+                                else { Image(systemName: "heart.circle.fill").font(.largeTitle).foregroundStyle(.pink) }
+                                Text(partner.name).font(.caption.bold()).padding(6).background(.regularMaterial).clipShape(Capsule()) }
                         }
                     }
                 }.mapControls { MapCompass(); MapScaleView() }.ignoresSafeArea(edges: .bottom)
                 VStack(spacing: 16) {
                     HStack {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("РЯДОМ").font(.custom("DockerOne", size: 32))
+                            Text("РЯДОМ").font(.custom("DOCKERONE", size: 32))
                             Text("Ваш маленький мир на двоих").font(.subheadline)
                         }
                         Spacer()
@@ -95,7 +98,13 @@ struct Home: View {
                         HStack { avatarView; VStack(alignment: .leading) { Text(name).font(.title2.bold()); Text(position.status).font(.caption).foregroundStyle(.secondary) }; Spacer(); Image(systemName: "leaf.fill") }
                         Text("Вместе — даже на расстоянии").font(.title3.bold())
                         if let partner = api.state?.partner {
-                            Text(partner.name).font(.headline)
+                            HStack {
+                                Text(partner.name).font(.headline)
+                                if let own = position.location, let point = partner.location, !partner.paused {
+                                    let distance = own.distance(from: CLLocation(latitude: point.latitude, longitude: point.longitude))
+                                    Text(distance < 1000 ? "\(Int(distance)) м от тебя" : String(format: "%.1f км от тебя", distance / 1000)).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
                             Text(partner.paused ? "Геопозиция на паузе" : "Последняя полученная позиция").font(.caption)
                             if let updated = partner.updated { Text(Date(timeIntervalSince1970: updated), style: .relative).font(.caption) }
                         } else { Button("Подключить пару") { settings = true } }
@@ -105,23 +114,7 @@ struct Home: View {
                 }.padding(16)
             }.foregroundStyle(ink)
             .sheet(isPresented: $settings) {
-                NavigationStack { Form {
-                    Section("Твой профиль") { TextField("Имя", text: $name); PhotosPicker(selection: $photo, matching: .images) { Label("Выбрать аватарку", systemImage: "photo") } }
-                    Section("Подключение") {
-                        TextField("https://ваш-сервер", text: $api.endpoint).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
-                        Button("Подключиться") { Task { do { try await api.connect() } catch { api.error = error.localizedDescription } } }
-                        if api.state?.partner == nil {
-                            Button("Создать код на 10 минут") { Task { await api.action("invite") } }
-                            if let invite = api.invite { Text(invite).font(.title.monospaced()).textSelection(.enabled); ShareLink(item: "Подключись ко мне в Рядом. Сервер: \(api.endpoint), код: \(invite) (10 минут)") }
-                            TextField("Код партнёра", text: $code).textInputAutocapitalization(.characters).autocorrectionDisabled()
-                            Button("Присоединиться") { Task { await api.action("join", ["code": code]) } }
-                        } else { Button("Отключить пару", role: .destructive) { confirmUnpair = true } }
-                        if api.busy { ProgressView() }
-                    }
-                    Section("Геопозиция") { Button("Разрешить обновления в фоне") { position.enableBackground() }; Text("Экономный режим обновляет позицию при существенном перемещении. Это не непрерывная трансляция."); Link("Открыть настройки iPhone", destination: URL(string: UIApplication.openSettingsURLString)!) }
-                    Section { Button("Удалить мой аккаунт", role: .destructive) { confirmDelete = true } }
-                    Section("О приложении") { Text("Рядом · версия исходников 0.1"); Text("Виджет показывает последнюю позицию, полученную приложением. iOS определяет время его обновления.") }
-                }.navigationTitle("Наш мир").toolbar { Button("Готово") { settings = false } } }
+                settingsView
             }
             .task {
                 while !Task.isCancelled {
@@ -139,6 +132,25 @@ struct Home: View {
                     if let jpeg = resized.jpegData(compressionQuality: 0.65) { avatar = jpeg; UserDefaults.standard.set(jpeg, forKey: "avatar"); await api.action("profile", ["name": name, "avatar": jpeg.base64EncodedString()]) }
                 } } } }
         }
+    }
+    private var settingsView: some View {
+                NavigationStack { Form {
+                    Section("Твой профиль") { TextField("Имя", text: $name); PhotosPicker(selection: $photo, matching: .images) { Label("Выбрать аватарку", systemImage: "photo") } }
+                    Section("Подключение") {
+                        TextField("https://ваш-сервер", text: $api.endpoint).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                        Button("Подключиться") { Task { do { try await api.connect() } catch { api.error = error.localizedDescription } } }
+                        if api.state?.partner == nil {
+                            Button("Создать код на 10 минут") { Task { await api.action("invite") } }
+                            if let invite = api.invite { Text(invite).font(.title.monospaced()).textSelection(.enabled); ShareLink(item: "Подключись ко мне в Рядом. Сервер: \(api.endpoint), код: \(invite) (10 минут)") }
+                            TextField("Код партнёра", text: $code).textInputAutocapitalization(.characters).autocorrectionDisabled()
+                            Button("Присоединиться") { Task { await api.action("join", ["code": code]) } }
+                        } else { Button("Отключить пару", role: .destructive) { confirmUnpair = true } }
+                        if api.busy { ProgressView() }
+                    }
+                    Section("Геопозиция") { Button("Разрешить обновления в фоне") { position.enableBackground() }; Text("Экономный режим обновляет позицию при существенном перемещении. Это не непрерывная трансляция."); Link("Открыть настройки iPhone", destination: URL(string: UIApplication.openSettingsURLString)!) }
+                    Section { Button("Удалить мой аккаунт", role: .destructive) { confirmDelete = true } }
+                    Section("О приложении") { Text("Рядом · версия исходников 0.1"); Text("Виджет показывает последнюю позицию, полученную приложением. iOS определяет время его обновления.") }
+                }.navigationTitle("Наш мир").toolbar { Button("Готово") { settings = false } } }
     }
     @ViewBuilder var avatarView: some View {
         if let avatar, let image = UIImage(data: avatar) { Image(uiImage: image).resizable().scaledToFill().frame(width: 52, height: 52).clipShape(Circle()) }
