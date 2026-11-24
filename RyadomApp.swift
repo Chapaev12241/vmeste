@@ -16,7 +16,7 @@ struct RyadomApp: App {
     var body: some Scene { WindowGroup { Home() } }
 }
 
-@MainActor final class Position: NSObject, ObservableObject, CLLocationManagerDelegate {
+@MainActor final class Position: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
     static let shared = Position()
     private let manager = CLLocationManager()
     @Published var location: CLLocation?

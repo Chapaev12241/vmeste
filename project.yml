@@ -9,8 +9,12 @@ targets:
   Ryadom:
     type: application
     platform: iOS
-    sources: [RyadomApp.swift, API.swift, Shared]
-    resources: [Resources]
+    sources:
+      - RyadomApp.swift
+      - API.swift
+      - Shared
+      - path: Resources
+        buildPhase: resources
     dependencies:
       - target: RyadomWidget
     settings:
@@ -24,6 +28,8 @@ targets:
       path: Info.plist
       properties:
         UILaunchScreen: {}
+        CFBundleDisplayName: Рядом
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight, UIInterfaceOrientationPortraitUpsideDown]
         NSLocationWhenInUseUsageDescription: Показывать и отправлять твою позицию партнёру с твоего разрешения.
         NSLocationAlwaysAndWhenInUseUsageDescription: Обновлять позицию для партнёра при перемещении в фоне.
         UIAppFonts: [Docker One.ttf]
