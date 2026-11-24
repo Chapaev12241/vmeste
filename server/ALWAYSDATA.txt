@@ -1,0 +1,27 @@
+Бесплатный сервер alwaysdata
+
+Нужен личный аккаунт Free. Сначала проверьте доступ к alwaysdata.net с обоих телефонов без VPN.
+
+1. Через SSH в своём аккаунте:
+   git clone https://github.com/Chapaev12241/vmeste.git
+   mkdir -p ~/ryadom-data
+
+2. В Web > Sites > Add a site:
+   Type: User program
+   Address: <account>.alwaysdata.net
+   Command: python3 /home/<account>/vmeste/server/server.py
+   Working directory: /home/<account>/vmeste/server
+
+3. В Environment задать:
+   IP=<адрес из пояснения в панели User program>
+   PORT=<порт из пояснения в панели User program>
+   DATABASE_PATH=/home/<account>/ryadom-data/ryadom.sqlite
+
+4. Не размещайте файл базы в каталоге статического сайта. Включите HTTPS и перенаправление HTTP на HTTPS в панели. Проверьте https://<account>.alwaysdata.net/health — должен отвечать {"ok": true}.
+
+5. В приложении на обоих iPhone указать https://<account>.alwaysdata.net.
+
+Обновление: cd ~/vmeste && git pull, затем Restart в панели сайта. Данные сохраняются отдельно от репозитория.
+
+Документация: https://help.alwaysdata.com/en/docs/web-hosting/sites/http-servers/user-program/
+Тариф: https://www.alwaysdata.com/en/offers/

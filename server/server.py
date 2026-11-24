@@ -6,6 +6,7 @@ def connect():
     db = sqlite3.connect(DB)
     db.row_factory = sqlite3.Row
     db.execute('PRAGMA foreign_keys=ON')
+    db.execute('PRAGMA busy_timeout=5000')
     return db
 def initialize():
     with connect() as db:
@@ -28,6 +29,7 @@ class Handler(BaseHTTPRequestHandler):
                 rate = db.execute('SELECT * FROM limits WHERE key=?',(key,)).fetchone()
                 if rate and rate['reset'] > now and rate['count'] >= 180:
                     return self.reply(429, {'error':'Слишком много запросов. Подождите минуту.'})
+                db.execute('DELETE FROM limits WHERE reset<?',(now-3600,))
                 db.execute('INSERT INTO limits VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET count=?,reset=?',(key,1,now+60,(rate['count']+1 if rate and rate['reset']>now else 1),(rate['reset'] if rate and rate['reset']>now else now+60)))
                 db.commit()
                 if self.path == '/health': return self.reply(200, {'ok':True})
@@ -86,4 +88,4 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, TypeError): self.reply(400, {'error':'Некорректный запрос'})
         except Exception: self.reply(500, {'error':'Ошибка сервера'})
 if __name__ == '__main__':
-    initialize(); ThreadingHTTPServer(('0.0.0.0',int(os.getenv('PORT','8080'))),Handler).serve_forever()
+    initialize(); ThreadingHTTPServer((os.getenv('IP','0.0.0.0'),int(os.getenv('PORT','8080'))),Handler).serve_forever()
