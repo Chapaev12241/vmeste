@@ -12,6 +12,7 @@ struct AppSettingsView: View {
     @Binding var confirmDelete: Bool
     @Environment(\.dismiss) private var dismiss
     @AppStorage("passoMode") private var passoMode = "auto"
+    @AppStorage("frequentBackground") private var frequentBackground = true
     @AppStorage("passoOwnerIsMe") private var passoOwnerIsMe = false
     @State private var code = ""
     @State private var connecting = false
@@ -37,7 +38,7 @@ struct AppSettingsView: View {
                     carSection
                     serverSection
                     accountSection
-                    Text("Рядом · 0.3\nВаш маленький мир на двоих")
+                    Text("Рядом · 0.4\nВаш маленький мир на двоих")
                         .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(.vertical, 12)
                 }.padding(18)
             }
@@ -117,7 +118,10 @@ struct AppSettingsView: View {
                 if position.permissionBlocked { position.openSettings() } else { position.refreshNow(); api.notice = "Запросили свежую геопозицию" }
             }
             action("Разрешить обновления в фоне", icon: "moon.stars.fill", secondary: true) { position.enableBackground() }
-            Text("Для обновлений вне приложения выбери «Всегда» в разрешениях iPhone. В фоне работает экономный режим: позиция обновляется при существенном перемещении.")
+            Toggle("Чаще обновлять в фоне", isOn: $frequentBackground)
+                .tint(accent)
+                .onChange(of: frequentBackground) { _, _ in position.backgroundPreferenceChanged() }
+            Text(frequentBackground ? "При разрешении «Всегда» обновляем позицию и с заблокированным экраном. Обычный фильтр — 50 м, в поездке — 75 м; отправка не чаще раза в 30 секунд. В энергосбережении — 100 м и 60 секунд. Когда стоишь, отправляем реже. iOS определяет фактическую частоту и может показывать значок геолокации." : "Максимальная экономия: в фоне обновляем позицию при существенном перемещении. Для частых обновлений включи переключатель выше.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

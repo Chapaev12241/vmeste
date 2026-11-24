@@ -41,6 +41,21 @@ struct RyadomApp: App {
         enabled = UserDefaults.standard.bool(forKey: "sharingEnabled")
         if enabled { start() }
     }
+    var frequentBackground: Bool { UserDefaults.standard.object(forKey: "frequentBackground") as? Bool ?? true }
+    var backgroundContinuous: Bool { enabled && frequentBackground && authorization == .authorizedAlways }
+    private func applySamplingProfile() {
+        let lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+        let accuracy: CLLocationAccuracy = foreground ? kCLLocationAccuracyNearestTenMeters : kCLLocationAccuracyHundredMeters
+        let distance: CLLocationDistance = foreground ? 25 : lowPower ? 100 : (location?.speed ?? 0) >= 8 ? 75 : 50
+        if manager.desiredAccuracy != accuracy { manager.desiredAccuracy = accuracy }
+        if manager.distanceFilter != distance { manager.distanceFilter = distance }
+        manager.activityType = .other
+        // Explicitly enabled background tracking must not get stuck in an automatic pause.
+        manager.pausesLocationUpdatesAutomatically = foreground || !backgroundContinuous
+        manager.allowsBackgroundLocationUpdates = backgroundContinuous
+        manager.showsBackgroundLocationIndicator = backgroundContinuous
+    }
+    func backgroundPreferenceChanged() { if enabled { start() } }
     var permissionBlocked: Bool { authorization == .denied || authorization == .restricted }
     func toggle() {
         enabled.toggle()
@@ -55,13 +70,13 @@ struct RyadomApp: App {
         enabled = false; locating = false
         UserDefaults.standard.set(false, forKey: "sharingEnabled")
         retryTask?.cancel(); retryTask = nil
-        manager.stopUpdatingLocation(); manager.stopMonitoringSignificantLocationChanges()
+        manager.stopUpdatingLocation(); manager.allowsBackgroundLocationUpdates = false; manager.stopMonitoringSignificantLocationChanges()
         monitoring = false; status = "Геопозиция выключена"
     }
     func setForeground(_ value: Bool) {
         foreground = value
         if value { if enabled { start(); publishIfNeeded(force: true) } }
-        else { manager.stopUpdatingLocation(); retryTask?.cancel(); retryTask = nil; if enabled { start() } }
+        else { retryTask?.cancel(); retryTask = nil; if enabled { start() } else { manager.stopUpdatingLocation(); manager.allowsBackgroundLocationUpdates = false } }
     }
     func refreshNow() {
         if !enabled { enabled = true; UserDefaults.standard.set(true, forKey: "sharingEnabled") }
@@ -87,10 +102,20 @@ struct RyadomApp: App {
             if !monitoring, CLLocationManager.significantLocationChangeMonitoringAvailable() {
                 manager.startMonitoringSignificantLocationChanges(); monitoring = true
             }
-            if foreground { locating = location == nil; manager.startUpdatingLocation(); status = location == nil ? "Ищем геопозицию…" : "Геопозиция включена"; scheduleRetry() }
-            else { status = authorization == .authorizedAlways ? "Экономный режим в фоне" : "Для работы в фоне разрешите «Всегда»" }
+            applySamplingProfile()
+            if foreground {
+                locating = location == nil; manager.startUpdatingLocation()
+                status = location == nil ? "Ищем геопозицию…" : "Геопозиция включена"
+                scheduleRetry()
+            } else if backgroundContinuous {
+                manager.startUpdatingLocation()
+                status = "Частые фоновые обновления включены"
+            } else {
+                manager.stopUpdatingLocation()
+                status = authorization == .authorizedAlways ? "Экономный режим в фоне" : "Для работы в фоне разрешите «Всегда»"
+            }
         case .denied, .restricted:
-            locating = false; manager.stopUpdatingLocation(); status = "Разрешите геопозицию в настройках iPhone"
+            locating = false; manager.stopUpdatingLocation(); manager.allowsBackgroundLocationUpdates = false; manager.stopMonitoringSignificantLocationChanges(); monitoring = false; status = "Разрешите геопозицию в настройках iPhone"
         case .notDetermined:
             locating = true; status = "Ожидаем разрешения"; manager.requestWhenInUseAuthorization()
         @unknown default: status = "Проверьте разрешение геопозиции"
@@ -110,9 +135,14 @@ struct RyadomApp: App {
             }
         }
     }
+    private var minimumSendInterval: TimeInterval {
+        if foreground { return 15 }
+        if ProcessInfo.processInfo.isLowPowerModeEnabled { return 60 }
+        return (location?.speed ?? -1) >= 0 && (location?.speed ?? 0) < 0.5 ? 90 : 30
+    }
     private func publishIfNeeded(force: Bool) {
         guard enabled, let location, location.horizontalAccuracy >= 0, abs(location.timestamp.timeIntervalSinceNow) < 180,
-              uploadTask == nil, force || Date().timeIntervalSince(lastAttempt) >= 15 else { return }
+              uploadTask == nil, force || Date().timeIntervalSince(lastAttempt) >= minimumSendInterval else { return }
         lastAttempt = Date()
         let taskID = UIApplication.shared.beginBackgroundTask(withName: "Send position", expirationHandler: nil)
         uploadTask = Task { [weak self] in
@@ -129,8 +159,9 @@ struct RyadomApp: App {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let latest = locations.last(where: { $0.horizontalAccuracy >= 0 }), abs(latest.timestamp.timeIntervalSinceNow) < 180 else { return }
         location = latest; locating = false; standaloneRequest = false
-        status = enabled ? "Геопозиция включена" : "Геопозиция выключена"
-        publishIfNeeded(force: !foreground)
+        if enabled { applySamplingProfile() }
+        status = !enabled ? "Геопозиция выключена" : foreground ? "Геопозиция включена" : backgroundContinuous ? "Частые фоновые обновления включены" : "Экономный режим в фоне"
+        publishIfNeeded(force: false)
     }
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         if (error as? CLError)?.code == .denied { authorization = manager.authorizationStatus; locating = false; status = "Разрешите геопозицию в настройках iPhone" }

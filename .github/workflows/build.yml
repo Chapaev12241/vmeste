@@ -21,8 +21,8 @@ jobs:
           codesign --force --sign - --entitlements Ryadom.entitlements build/Build/Products/Release-iphoneos/Ryadom.app
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/Ryadom.app Payload/
-          zip -qr Ryadom-0.3-AltStore.ipa Payload
+          zip -qr Ryadom-0.4-AltStore.ipa Payload
       - uses: actions/upload-artifact@v4
         with:
-          name: Ryadom-0.3-AltStore
-          path: Ryadom-0.3-AltStore.ipa
+          name: Ryadom-0.4-AltStore
+          path: Ryadom-0.4-AltStore.ipa
