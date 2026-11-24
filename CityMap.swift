@@ -22,7 +22,7 @@ struct CityMap: UIViewRepresentable {
         map.delegate = context.coordinator
         map.minimumZoomLevel = 3
         map.maximumZoomLevel = 19
-        map.preferredFramesPerSecond = 30
+        map.preferredFramesPerSecond = .lowPower
         map.logoView.isHidden = true
         // Provider and OpenStreetMap attribution remain available through the info control.
         map.attributionButtonPosition = .bottomLeft

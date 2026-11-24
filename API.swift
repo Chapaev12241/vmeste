@@ -30,7 +30,7 @@ enum APIError: LocalizedError {
     @Published var error: String?
     @Published var busy=false
     @Published var invite: String?
-    @Published var endpoint = UserDefaults.standard.string(forKey:"endpoint") ?? ""
+    @Published var endpoint = UserDefaults.standard.string(forKey:"endpoint") ?? "https://mikhail000.alwaysdata.net"
     private var token=Vault.read()
     private var registration: Task<String, Error>?
     private var boundEndpoint: String? = UserDefaults.standard.string(forKey:"boundEndpoint")

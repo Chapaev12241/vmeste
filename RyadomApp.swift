@@ -152,7 +152,7 @@ struct Home: View {
                     ForEach(MapLook.allCases, id: \.self) { option in
                         Button { look = option; mapFailed = false } label: {
                             Text(option.rawValue).font(.system(size: 12, weight: .semibold)).padding(.horizontal, 15).frame(height: 36)
-                                .background(look == option ? AnyShapeStyle(accent) : AnyShapeStyle(.clear), in: Capsule())
+                                .background(look == option ? AnyShapeStyle(accent) : AnyShapeStyle(Color.clear), in: Capsule())
                                 .foregroundStyle(look == option ? .white : .primary)
                         }
                     }
