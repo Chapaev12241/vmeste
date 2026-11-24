@@ -94,11 +94,14 @@ struct Home: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) { header.padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 8) }
         .safeAreaInset(edge: .bottom, spacing: 0) { bottomControls.padding(.horizontal, 16).padding(.bottom, 8) }
-        .sheet(isPresented: $settings) { settingsView.tint(accent) }
+        .sheet(isPresented: $settings) {
+            settingsView.tint(accent)
+                .alert("Не удалось выполнить действие", isPresented: Binding(get: { api.error != nil && settings }, set: { if !$0 { api.error = nil } })) { Button("Понятно") { api.error = nil } } message: { Text(api.error ?? "") }
+                .confirmationDialog("Удалить аккаунт и отключить пару?", isPresented: $confirmDelete) { Button("Удалить", role: .destructive) { position.stopLocally(); Task { await api.action("delete") } } }
+                .confirmationDialog("Прекратить обмен и удалить позиции пары?", isPresented: $confirmUnpair) { Button("Отключить", role: .destructive) { position.stopLocally(); Task { await api.action("unpair") } } }
+        }
         .sheet(isPresented: $details) { personDetails.presentationDetents([.height(290), .medium]).presentationDragIndicator(.visible) }
-        .alert("Не удалось выполнить действие", isPresented: Binding(get: { api.error != nil }, set: { if !$0 { api.error = nil } })) { Button("Понятно") { api.error = nil } } message: { Text(api.error ?? "") }
-        .confirmationDialog("Удалить аккаунт и отключить пару?", isPresented: $confirmDelete) { Button("Удалить", role: .destructive) { position.stopLocally(); Task { await api.action("delete") } } }
-        .confirmationDialog("Прекратить обмен и удалить позиции пары?", isPresented: $confirmUnpair) { Button("Отключить", role: .destructive) { position.stopLocally(); Task { await api.action("unpair") } } }
+        .alert("Не удалось выполнить действие", isPresented: Binding(get: { api.error != nil && !settings && !details }, set: { if !$0 { api.error = nil } })) { Button("Понятно") { api.error = nil } } message: { Text(api.error ?? "") }
         .task {
             while !Task.isCancelled {
                 if phase == .active { do { try await api.refresh() } catch { api.error = error.localizedDescription } }
@@ -131,7 +134,7 @@ struct Home: View {
             }.padding(.horizontal, 15).frame(height: 44).background(.regularMaterial, in: Capsule())
             Spacer(minLength: 0)
             Button { focus(Self.yuzhny) } label: {
-                HStack(spacing: 4) { Text("Южно-Сахалинск").font(.system(size: 12, weight: .semibold)); Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)) }
+                HStack(spacing: 4) { Text("Южно-Сахалинск").font(.system(size: 12, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8); Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)) }
                     .padding(.horizontal, 12).frame(minHeight: 44).background(.regularMaterial, in: Capsule())
             }.accessibilityLabel("Вернуться к Южно-Сахалинску")
             Button { settings = true } label: { ProfileBubble(data: avatar, name: name, color: accent, size: 38).padding(3).background(.regularMaterial, in: Circle()) }.accessibilityLabel("Профиль и настройки")
@@ -231,7 +234,7 @@ struct Home: View {
                 NavigationStack { Form {
                     Section("Твой профиль") { TextField("Имя", text: $name); PhotosPicker(selection: $photo, matching: .images) { Label("Выбрать аватарку", systemImage: "photo") } }
                     Section("Подключение") {
-                        TextField("https://ваш-сервер", text: $api.endpoint).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                        DisclosureGroup("Адрес сервера") { TextField("HTTPS-адрес", text: $api.endpoint).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL) }
                         Button("Подключиться") { Task { do { try await api.connect() } catch { api.error = error.localizedDescription } } }
                         if api.state?.partner == nil {
                             Button("Создать код на 10 минут") { Task { await api.action("invite") } }
