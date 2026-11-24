@@ -16,6 +16,8 @@ struct RyadomApp: App {
     var body: some Scene { WindowGroup { Home() } }
 }
 
+enum BackgroundLocationMode: String { case economy, balanced, frequent }
+
 @MainActor final class Position: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
     static let shared = Position()
     private let manager = CLLocationManager()
@@ -39,14 +41,23 @@ struct RyadomApp: App {
         manager.pausesLocationUpdatesAutomatically = true
         authorization = manager.authorizationStatus
         enabled = UserDefaults.standard.bool(forKey: "sharingEnabled")
+        if UserDefaults.standard.string(forKey: "backgroundMode") == nil {
+            let legacy = UserDefaults.standard.object(forKey: "frequentBackground") as? Bool
+            UserDefaults.standard.set(legacy == false ? "economy" : "balanced", forKey: "backgroundMode")
+        }
         if enabled { start() }
     }
-    var frequentBackground: Bool { UserDefaults.standard.object(forKey: "frequentBackground") as? Bool ?? true }
+    var backgroundMode: BackgroundLocationMode { BackgroundLocationMode(rawValue: UserDefaults.standard.string(forKey: "backgroundMode") ?? "balanced") ?? .balanced }
+    var frequentBackground: Bool { backgroundMode != .economy }
     var backgroundContinuous: Bool { enabled && frequentBackground && authorization == .authorizedAlways }
     private func applySamplingProfile() {
         let lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
-        let accuracy: CLLocationAccuracy = foreground ? kCLLocationAccuracyNearestTenMeters : kCLLocationAccuracyHundredMeters
-        let distance: CLLocationDistance = foreground ? 25 : lowPower ? 100 : (location?.speed ?? 0) >= 8 ? 75 : 50
+        let accuracy: CLLocationAccuracy = foreground || (backgroundMode == .frequent && !lowPower) ? kCLLocationAccuracyNearestTenMeters : kCLLocationAccuracyHundredMeters
+        let distance: CLLocationDistance
+        if foreground { distance = 25 }
+        else if lowPower { distance = 100 }
+        else if backgroundMode == .frequent { distance = (location?.speed ?? 0) >= 8 ? 25 : 15 }
+        else { distance = (location?.speed ?? 0) >= 8 ? 75 : 50 }
         if manager.desiredAccuracy != accuracy { manager.desiredAccuracy = accuracy }
         if manager.distanceFilter != distance { manager.distanceFilter = distance }
         manager.activityType = .other
@@ -109,7 +120,7 @@ struct RyadomApp: App {
                 scheduleRetry()
             } else if backgroundContinuous {
                 manager.startUpdatingLocation()
-                status = "Частые фоновые обновления включены"
+                status = backgroundMode == .frequent ? "Частый фоновый режим" : "Сбалансированный фоновый режим"
             } else {
                 manager.stopUpdatingLocation()
                 status = authorization == .authorizedAlways ? "Экономный режим в фоне" : "Для работы в фоне разрешите «Всегда»"
@@ -138,6 +149,7 @@ struct RyadomApp: App {
     private var minimumSendInterval: TimeInterval {
         if foreground { return 15 }
         if ProcessInfo.processInfo.isLowPowerModeEnabled { return 60 }
+        if backgroundMode == .frequent { return 15 }
         return (location?.speed ?? -1) >= 0 && (location?.speed ?? 0) < 0.5 ? 90 : 30
     }
     private func publishIfNeeded(force: Bool) {
@@ -160,7 +172,7 @@ struct RyadomApp: App {
         guard let latest = locations.last(where: { $0.horizontalAccuracy >= 0 }), abs(latest.timestamp.timeIntervalSinceNow) < 180 else { return }
         location = latest; locating = false; standaloneRequest = false
         if enabled { applySamplingProfile() }
-        status = !enabled ? "Геопозиция выключена" : foreground ? "Геопозиция включена" : backgroundContinuous ? "Частые фоновые обновления включены" : "Экономный режим в фоне"
+        status = !enabled ? "Геопозиция выключена" : foreground ? "Геопозиция включена" : backgroundContinuous ? backgroundMode == .frequent ? "Частый фоновый режим" : "Сбалансированный фоновый режим" : "Экономный режим в фоне"
         publishIfNeeded(force: false)
     }
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
