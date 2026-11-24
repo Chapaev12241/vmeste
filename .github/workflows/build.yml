@@ -1,0 +1,22 @@
+name: Build Ryadom
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s server -v
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - run: xcodebuild -project Ryadom.xcodeproj -scheme Ryadom -sdk iphoneos -configuration Release -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - run: mkdir -p Payload && cp -R build/Build/Products/Release-iphoneos/Ryadom.app Payload/ && zip -qr Ryadom-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ryadom-unsigned
+          path: Ryadom-unsigned.ipa
