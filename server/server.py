@@ -1,4 +1,4 @@
-import os, sqlite3, secrets, hashlib, json, time, threading
+import os, sqlite3, secrets, hashlib, json, time, threading, socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 DB = os.getenv('DATABASE_PATH', 'ryadom.sqlite')
 LOCK = threading.Lock()
@@ -88,4 +88,8 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, TypeError): self.reply(400, {'error':'Некорректный запрос'})
         except Exception: self.reply(500, {'error':'Ошибка сервера'})
 if __name__ == '__main__':
-    initialize(); ThreadingHTTPServer((os.getenv('IP','0.0.0.0'),int(os.getenv('PORT','8080'))),Handler).serve_forever()
+    initialize()
+    host = os.getenv('IP', '0.0.0.0')
+    class HTTPServer(ThreadingHTTPServer):
+        address_family = socket.AF_INET6 if ':' in host else socket.AF_INET
+    HTTPServer((host, int(os.getenv('PORT', '8080'))), Handler).serve_forever()
