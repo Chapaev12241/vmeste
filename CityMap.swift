@@ -98,10 +98,11 @@ struct CityMap: UIViewRepresentable {
             for id in Array(annotations.keys) where !ids.contains(id) {
                 if let annotation = annotations.removeValue(forKey: id) { map.removeAnnotation(annotation) }
             }
+            let night = CarMarker.isNight()
             for person in parent.people {
                 let heading = person.heading - map.direction
                 let visualKey = person.isDriving
-                    ? "car:\(CarMarker.headingSector(heading))"
+                    ? "car:\(night ? "night" : "day"):\(CarMarker.headingSector(heading))"
                     : "avatar:\(person.id):\(person.name):\(person.avatar?.hashValue ?? 0)"
                 if let existing = annotations[person.id], existing.imageKey == visualKey {
                     existing.person = person; existing.title = person.name
@@ -113,7 +114,7 @@ struct CityMap: UIViewRepresentable {
                 annotations[person.id] = point
                 if imageCache[visualKey] == nil {
                     if imageCache.count > 64 { imageCache.removeAll(keepingCapacity: true) }
-                    imageCache[visualKey] = person.isDriving ? CarMarker.image(heading: heading) : Self.avatarImage(person)
+                    imageCache[visualKey] = person.isDriving ? CarMarker.image(heading: heading, night: night) : Self.avatarImage(person)
                 }
                 map.addAnnotation(point)
             }

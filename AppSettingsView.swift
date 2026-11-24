@@ -38,7 +38,7 @@ struct AppSettingsView: View {
                     carSection
                     serverSection
                     accountSection
-                    Text("Рядом · 0.4.1\nВаш маленький мир на двоих")
+                    Text("Рядом · 0.4.2\nВаш маленький мир на двоих")
                         .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(.vertical, 12)
                 }.padding(18)
             }

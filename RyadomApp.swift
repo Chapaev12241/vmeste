@@ -258,7 +258,10 @@ struct Home: View {
         .onChange(of: photo) { _, item in Task { await savePhoto(item) } }
         .tint(accent)
     }
-    @ViewBuilder private var mapCanvas: some View {
+    private var mapCanvas: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { _ in mapContent }
+    }
+    @ViewBuilder private var mapContent: some View {
         if look == .city {
             CityMap(people: people, is3D: is3D, target: target, revision: revision, fitPair: fitPair) { mapFailed = true; look = .satellite }
         } else {
