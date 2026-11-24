@@ -1,0 +1,19 @@
+PythonAnywhere Free — резервное бесплатное размещение
+
+Аккаунт ещё не зарегистрирован. Бесплатное веб-приложение требует ежемесячного продления в панели.
+
+После создания аккаунта в Bash console:
+  git clone https://github.com/Chapaev12241/vmeste.git
+
+Web > Add a new web app > Manual configuration > Python 3.10+
+В WSGI configuration file:
+  import sys
+  sys.path.insert(0, '/home/ACCOUNT/vmeste/server')
+  from wsgi import application
+
+Заменить ACCOUNT именем реального аккаунта. База автоматически создаётся вне репозитория в ~/ryadom-data/ryadom.sqlite.
+Включить Force HTTPS, нажать Reload. Проверить https://ACCOUNT.pythonanywhere.com/health.
+В приложении на обоих iPhone указать HTTPS-адрес сервера.
+
+Обновление: cd ~/vmeste && git pull; Web > Reload.
+Не настраивать статическую раздачу каталога ~/ryadom-data.
